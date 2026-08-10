@@ -1,0 +1,43 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: MC-TeamViewer/TeamViewRelay-Protocol
+          ref: proto/v0.6.3
+          path: TeamViewRelay-Protocol
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: houseabsolute/actions-rust-cross@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          args: --locked --release
+        env:
+          TEAMVIEWRELAY_PROTOCOL_DIR: ${{ github.workspace }}/TeamViewRelay-Protocol/proto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teamviewrelay-squaremap-source-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/teamviewrelay-squaremap-source-client
+            target/${{ matrix.target }}/release/teamviewrelay-squaremap-source-client.exe
+          if-no-files-found: error

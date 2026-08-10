@@ -1,0 +1,11 @@
+relay_url = "ws://127.0.0.1:8765/mc-client"
+room_code = "default"
+source_url = "https://map.example.com/tiles/players.json"
+display_name = "Example Squaremap"
+poll_interval_secs = 5
+failure_grace_secs = 30
+normalize_dimensions = true
+
+# Optional. When omitted, a stable UUIDv5 is derived from relay_url, room_code,
+# and source_url. Only run one active instance for the same derived source ID.
+# source_id = "00000000-0000-0000-0000-000000000001"

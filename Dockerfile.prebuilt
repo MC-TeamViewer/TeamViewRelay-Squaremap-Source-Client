@@ -1,0 +1,6 @@
+FROM scratch
+
+COPY --from=binary teamviewrelay-squaremap-source-client /teamviewrelay-squaremap-source-client
+USER 65532:65532
+ENTRYPOINT ["/teamviewrelay-squaremap-source-client"]
+CMD ["--config", "/config/config.toml"]
