@@ -84,12 +84,7 @@ impl HistoryStore {
     pub fn load(config: &Config) -> Result<Self> {
         let source_id = config.source_id.hyphenated().to_string();
         let source_url = config.source_url.as_str().to_owned();
-        let players = load_state(
-            &config.history_state_path,
-            &source_id,
-            &config.room_code,
-            &source_url,
-        )?;
+        let players = load_state(&config.history_state_path, &source_id, &config.room_code)?;
         let mut store = Self {
             path: config.history_state_path.clone(),
             source_id,
@@ -270,7 +265,6 @@ fn load_state(
     path: &Path,
     source_id: &str,
     room_code: &str,
-    source_url: &str,
 ) -> Result<BTreeMap<String, PlayerHistory>> {
     let raw = match fs::read(path) {
         Ok(raw) => raw,
@@ -294,11 +288,8 @@ fn load_state(
             state.schema_version
         );
     }
-    if state.source_id != source_id
-        || state.room_code != room_code
-        || state.source_url != source_url
-    {
-        bail!("history state identity does not match source_id, room_code, and source_url");
+    if state.source_id != source_id || state.room_code != room_code {
+        bail!("history state identity does not match source_id and room_code");
     }
     Ok(state.players)
 }
@@ -434,5 +425,26 @@ mod tests {
         history.observe_snapshot(&Snapshot::default(), 2_000);
         assert!(history.cleanup_expired(i64::MAX).is_empty());
         assert_eq!(history.snapshot().len(), 1);
+    }
+
+    #[test]
+    fn history_identity_survives_transport_url_change() {
+        let path = std::env::temp_dir().join(format!(
+            "teamviewrelay-history-url-change-{}-{}.json",
+            std::process::id(),
+            utc_now_ms()
+        ));
+        let state = StateFile {
+            schema_version: STATE_SCHEMA_VERSION,
+            source_id: "source".to_owned(),
+            room_code: "room".to_owned(),
+            source_url: "https://map1.nodemc.cc/tiles/players.json".to_owned(),
+            players: BTreeMap::new(),
+        };
+        fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+
+        let loaded = load_state(&path, "source", "room").unwrap();
+        assert!(loaded.is_empty());
+        fs::remove_file(path).unwrap();
     }
 }

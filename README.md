@@ -81,6 +81,29 @@ docker build \
 
 上游请求失败时，客户端不会刷新旧玩家对象。连续失败达到 30 秒后会清空自己上报的玩家和 Tab 状态；`200` 和 `304` 都视为成功确认。
 
+### 可选 pass-cdn 浏览器 sidecar
+
+Rust 客户端仍支持直接读取源站；如果 EdgeOne 验证频繁失效，可以让
+`pass-cdn` 保持一个 Chromium 会话，再把 Rust 的 `source_url` 指向 sidecar：
+
+```toml
+source_url = "http://pass-cdn:8080/tiles/players.json"
+source_id = "00000000-0000-0000-0000-000000000001"
+```
+
+sidecar 提供与源站相同的 JSON 接口，并实现 `ETag`/`304`、健康检查和过期
+`503`。Rust 不需要启动 Python 或 Chrome，仍使用原有的 HTTP 轮询和失败宽限。
+
+仓库提供独立的 `compose.pass-cdn.example.yml`，不会改变现有直连 Compose：
+
+```bash
+cp config.pass-cdn.example.toml config.pass-cdn.toml
+docker compose -f compose.pass-cdn.example.yml up -d --build
+```
+
+切换到 sidecar 时请固定 `source_id`。历史文件现在只按 `source_id` 和房间
+校验，传输地址从源站切换为 sidecar 不会丢失离线历史。
+
 ## 数据与故障语义
 
 - Squaremap 返回的 32 位 UUID 会规范为小写带横线 UUID。

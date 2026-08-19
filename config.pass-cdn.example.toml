@@ -1,0 +1,15 @@
+relay_url = "ws://127.0.0.1:8765/mc-client"
+room_code = "default"
+
+# pass-cdn 在 Compose 内部提供这个接口；Rust 仍然使用普通 HTTP 轮询。
+source_url = "http://pass-cdn:8080/tiles/players.json"
+
+# 使用固定 source_id，保证从直连 URL 切换到 sidecar 后实时状态和历史连续。
+source_id = "00000000-0000-0000-0000-000000000001"
+display_name = "Squaremap via pass-cdn"
+poll_interval_secs = 5
+failure_grace_secs = 30
+normalize_dimensions = true
+history_state_path = "/data/history-v1.json"
+history_retention_days = 90
+history_flush_interval_secs = 60
