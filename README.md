@@ -1,179 +1,167 @@
 # TeamViewRelay Squaremap Source Client
 
-这个仓库是一个 Rust Cargo 包，提供两个二进制：
+这个项目读取 Squaremap 的在线玩家数据，并把玩家位置发送到 TeamViewRelay。
 
-- `teamviewrelay-squaremap-source-client`：轮询 Squaremap `players.json`，通过 TeamViewRelay `/mc-client` WebSocket 上报玩家状态。
-- `teamviewrelay-pass-cdn`：使用 headless Chromium 处理 EdgeOne 验证，并向主客户端提供稳定的本地 JSON 接口。
+当前要读取的地址是：
 
-主客户端仍可直接读取源站。只有源站启用了浏览器验证且普通 HTTP 无法稳定访问时，才需要启用 `pass-cdn`。
+```text
+https://map1.nodemc.cc/tiles/players.json
+```
 
-## 运行要求
+这个地址可能出现 EdgeOne 真人验证，所以项目提供两种启动方式：
 
-- Rust 1.94 或更高版本，或 Docker Compose
-- `TeamViewRelay-Protocol` 的 `proto` 目录
-- 使用本地 Cargo 构建时，将协议仓库放在本仓库同级目录，或者设置 `TEAMVIEWRELAY_PROTOCOL_DIR`
-- 使用 Docker Compose 构建时，将协议仓库放在 `../TeamViewRelay-Protocol/proto`
+1. 浏览器模式：自动启动无界面的 Chromium 完成验证，适合云服务器，推荐使用。
+2. 直连模式：直接请求源站，不启动 Chromium；只有源站允许普通 HTTP 请求时才能使用。
 
-## 直连源站
+## 准备目录
 
-复制配置并修改 `relay_url`、`source_url` 和显示名称：
+构建时需要 TeamViewRelay 的协议文件。两个仓库应放在同一目录：
+
+```text
+MC-mods/
+├── TeamViewRelay-Protocol/
+│   └── proto/
+└── TeamViewRelay-Squaremap-Source-Client/
+```
+
+服务器只需安装 Docker 和 Docker Compose，不需要安装 Python，也不需要在宿主机安装 Chromium。
+
+## 推荐：浏览器模式
+
+这是读取 `map1.nodemc.cc` 的推荐方式。
+
+### 1. 创建配置
+
+```bash
+cp config.pass-cdn.example.toml config.toml
+```
+
+打开 `config.toml`，至少修改下面两项：
+
+```toml
+# TeamViewRelay 的玩家客户端地址，必须以 /mc-client 结尾。
+# 这个地址必须能从 Docker 容器内访问，不能继续使用示例中的 127.0.0.1。
+relay_url = "wss://你的-TeamViewRelay-地址/mc-client"
+
+# 玩家数据要发送到的 TeamViewRelay 房间。
+room_code = "你的房间代码"
+```
+
+`source_url` 不要改，它已经指向负责读取源站的容器：
+
+```toml
+source_url = "http://pass-cdn:8080/tiles/players.json"
+```
+
+其他配置可以先保持默认。
+
+### 2. 构建并启动
+
+```bash
+docker compose --profile browser up -d --build
+```
+
+第一次构建会下载 Rust 和 Chromium，所需时间取决于网络速度。
+
+这条命令会启动两个容器：`pass-cdn` 负责从 `map1.nodemc.cc` 取数，`squaremap-source` 负责把取到的玩家数据发送给 TeamViewRelay。
+
+### 3. 确认是否成功
+
+```bash
+docker compose --profile browser ps
+```
+
+`pass-cdn` 显示 `healthy` 后，再查看日志：
+
+```bash
+docker compose --profile browser logs -f pass-cdn squaremap-source
+```
+
+成功时应看到：
+
+- `pass-cdn` 周期性输出 `players.json updated`
+- `squaremap-source` 成功连接 TeamViewRelay
+- TeamViewRelay 对应房间中出现 Squaremap 玩家
+
+按 `Ctrl+C` 只会退出日志查看，不会停止容器。
+
+### 4. 停止
+
+```bash
+docker compose --profile browser down
+```
+
+## 直连模式
+
+如果 `players.json` 可以直接返回 JSON，没有 EdgeOne 验证，可以不用 Chromium。
+
+### 1. 创建配置
 
 ```bash
 cp config.example.toml config.toml
 ```
 
-本地运行：
+打开 `config.toml`，修改：
 
-```bash
-cargo run --locked --release \
-  --bin teamviewrelay-squaremap-source-client -- \
-  --config config.toml
+```toml
+relay_url = "wss://你的-TeamViewRelay-地址/mc-client"
+room_code = "你的房间代码"
+source_url = "https://map1.nodemc.cc/tiles/players.json"
 ```
 
-使用 Docker Compose：
+### 2. 构建并启动
 
 ```bash
 docker compose up -d --build
+```
+
+### 3. 查看日志
+
+```bash
 docker compose logs -f squaremap-source
 ```
 
-默认 Compose 不启动 Chromium，只运行静态 MUSL 构建的主客户端。主客户端镜像以 `scratch` 为运行层，没有 shell、包管理器或动态运行库。
-
-## 使用 Chromium 处理 EdgeOne
-
-复制 sidecar 配置，并修改其中的 `relay_url`。`source_url` 应保持为 Compose 内部地址 `http://pass-cdn:8080/tiles/players.json`：
+如果日志提示 `captcha_required`，说明源站要求真人验证，请停止直连模式并改用上面的浏览器模式：
 
 ```bash
-cp config.pass-cdn.example.toml config.pass-cdn.toml
+docker compose down
+cp config.pass-cdn.example.toml config.toml
 ```
 
-启动主客户端和 Rust sidecar：
+然后重新填写 `relay_url` 和 `room_code`，再执行：
 
 ```bash
-TEAMVIEWRELAY_CONFIG_FILE=./config.pass-cdn.toml \
-  docker compose --profile browser up -d --build
+docker compose --profile browser up -d --build
 ```
 
-查看状态和日志：
+## 构建镜像失败
 
-```bash
-docker compose --profile browser ps
-docker compose --profile browser logs -f pass-cdn squaremap-source
-```
-
-检查 sidecar：
-
-```bash
-docker compose --profile browser exec pass-cdn \
-  /usr/local/bin/teamviewrelay-pass-cdn \
-  --healthcheck \
-  --healthcheck-url http://127.0.0.1:8080/healthz
-```
-
-停止服务：
-
-```bash
-TEAMVIEWRELAY_CONFIG_FILE=./config.pass-cdn.toml \
-  docker compose --profile browser down
-```
-
-sidecar 镜像包含 Rust 二进制和 Debian Chromium，不包含 Python。默认使用 `resident` 模式常驻一个浏览器会话。内存优先的服务器可以使用按需模式：
-
-```bash
-PASS_CDN_BROWSER_MODE=on-demand \
-TEAMVIEWRELAY_CONFIG_FILE=./config.pass-cdn.toml \
-  docker compose --profile browser up -d
-```
-
-按需模式先尝试普通 Rust HTTP 请求，遇到 EdgeOne 验证时才启动 Chromium。浏览器数据只写入容器 `/tmp`，容器重启后不会保留。
-
-## 本地运行 pass-cdn
-
-本地系统需要安装 Chromium、Chromium Browser 或 Google Chrome。程序会自动查找常见系统路径，也可以通过 `--browser-path` 明确指定。
-
-一次性读取并输出 JSON：
-
-```bash
-cargo run --locked --release --bin teamviewrelay-pass-cdn -- --once
-```
-
-启动 HTTP sidecar：
-
-```bash
-cargo run --locked --release --bin teamviewrelay-pass-cdn -- \
-  --serve --host 127.0.0.1 --port 8080
-```
-
-接口如下：
-
-- `GET /tiles/players.json`：返回当前玩家 JSON，支持 `ETag` 和 `304 Not Modified`
-- `GET /healthz`：缓存有效时返回 `200`，首次取数未完成或数据过期时返回 `503`
-
-## 构建
-
-构建两个 Rust 二进制：
-
-```bash
-cargo build --locked --release --bins
-```
-
-生成文件：
-
-```text
-target/release/teamviewrelay-squaremap-source-client
-target/release/teamviewrelay-pass-cdn
-```
-
-构建 Compose 使用的两个镜像：
-
-```bash
-docker compose --profile browser build squaremap-source pass-cdn
-```
-
-如果 Docker Hub 不可达，可以覆盖基础镜像地址：
+如果服务器无法从 Docker Hub 下载基础镜像，可以使用镜像站重新构建：
 
 ```bash
 RUST_IMAGE=docker.1ms.run/library/rust:1.94.1-bookworm \
 DEBIAN_IMAGE=docker.1ms.run/library/debian:bookworm-slim \
-  docker compose --profile browser build squaremap-source pass-cdn
+  docker compose --profile browser up -d --build
 ```
 
-## 配置说明
+## 常用命令
 
-主客户端的核心配置：
-
-- `relay_url`：TeamViewRelay 玩家客户端端点，例如 `wss://relay.example.com/mc-client`
-- `room_code`：Relay 房间，默认 `default`
-- `source_url`：源站 `players.json` 或 sidecar 地址
-- `source_id`：来源的稳定 UUID；切换直连和 sidecar 时应保持不变
-- `poll_interval_secs`：轮询间隔
-- `failure_grace_secs`：连续失败多久后清空本来源的实时状态
-- `normalize_dimensions`：是否把 `minecraft_overworld` 等 Squaremap 世界键转换为 `minecraft:overworld`
-- `history_state_path`：离线历史状态文件
-- `history_retention_days`：离线历史保留天数，`0` 表示永久保留
-
-Compose 默认把历史文件保存在 `squaremap-history` volume。主客户端限制为 `0.25 CPU`、`64MB` 内存；Chromium sidecar 限制为 `0.5 CPU`、`512MB` 内存。
-
-## 故障语义
-
-- `200` 响应更新玩家状态和位置采样时间。
-- `304` 视为成功，只刷新当前名单的在线确认时间。
-- 上游失败时保留旧状态；超过 `failure_grace_secs` 后清空本来源的实时玩家和 Tab 状态。
-- EdgeOne 验证页会被识别为 `captcha_required`，不会作为 JSON 解析错误处理。
-- 有 UUID 和名称但没有有效坐标的玩家仍会进入 Tab，但不会上报位置。
-- 切换直连源站与 sidecar 时，保持相同 `source_id` 可延续实时状态和离线历史。
-
-## 验证改动
+浏览器模式：
 
 ```bash
-cargo fmt --all -- --check
-cargo test --locked --all-targets
-cargo clippy --locked --all-targets -- -D warnings
-docker compose config
-TEAMVIEWRELAY_CONFIG_FILE=./config.pass-cdn.example.toml \
-  docker compose --profile browser config
+docker compose --profile browser ps
+docker compose --profile browser logs -f
+docker compose --profile browser restart
+docker compose --profile browser down
 ```
 
-## 发布
+直连模式：
 
-推送 `v*` tag 后，GitHub Actions 构建 Linux x86_64 版本，并在同一个 artifact 中上传两个二进制。
+```bash
+docker compose ps
+docker compose logs -f
+docker compose restart
+docker compose down
+```
+
+玩家离线历史保存在 Docker volume `squaremap-history` 中。普通的 `docker compose down` 不会删除它；不要使用 `docker compose down -v`，除非确定要删除历史数据。
