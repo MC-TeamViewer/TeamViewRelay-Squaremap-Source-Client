@@ -1,6 +1,13 @@
 relay_url = "ws://127.0.0.1:8765/mc-client"
 room_code = "default"
 source_url = "https://map.example.com/tiles/players.json"
+# Copy only the value of the browser's `-b '...'` argument into this file.
+# Keep this file private; it contains the EdgeOne verification session.
+# source_cookie_file = "data/map1.cookies"
+# Optional browser identity headers. User-Agent may need to match the browser
+# that completed the verification challenge.
+# source_user_agent = "Mozilla/5.0 ..."
+# source_referer = "https://map.example.com/tiles/players.json"
 display_name = "Example Squaremap"
 poll_interval_secs = 5
 failure_grace_secs = 30

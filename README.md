@@ -15,7 +15,22 @@ cp config.example.toml config.toml
 cargo run --release -- --config config.toml
 ```
 
-也可以使用环境变量覆盖配置：`TEAMVIEWRELAY_RELAY_URL`、`TEAMVIEWRELAY_ROOM_CODE`、`TEAMVIEWRELAY_SOURCE_URL`、`TEAMVIEWRELAY_DISPLAY_NAME`、`TEAMVIEWRELAY_POLL_INTERVAL_SECS`、`TEAMVIEWRELAY_FAILURE_GRACE_SECS`、`TEAMVIEWRELAY_NORMALIZE_DIMENSIONS`、`TEAMVIEWRELAY_SOURCE_ID`、`TEAMVIEWRELAY_HISTORY_STATE_PATH`、`TEAMVIEWRELAY_HISTORY_RETENTION_DAYS` 和 `TEAMVIEWRELAY_HISTORY_FLUSH_INTERVAL_SECS`。
+也可以使用环境变量覆盖配置：`TEAMVIEWRELAY_RELAY_URL`、`TEAMVIEWRELAY_ROOM_CODE`、`TEAMVIEWRELAY_SOURCE_URL`、`TEAMVIEWRELAY_SOURCE_COOKIE_FILE`、`TEAMVIEWRELAY_SOURCE_USER_AGENT`、`TEAMVIEWRELAY_SOURCE_REFERER`、`TEAMVIEWRELAY_DISPLAY_NAME`、`TEAMVIEWRELAY_POLL_INTERVAL_SECS`、`TEAMVIEWRELAY_FAILURE_GRACE_SECS`、`TEAMVIEWRELAY_NORMALIZE_DIMENSIONS`、`TEAMVIEWRELAY_SOURCE_ID`、`TEAMVIEWRELAY_HISTORY_STATE_PATH`、`TEAMVIEWRELAY_HISTORY_RETENTION_DAYS` 和 `TEAMVIEWRELAY_HISTORY_FLUSH_INTERVAL_SECS`。
+
+### EdgeOne 真人验证会话
+
+如果 EdgeOne 对 `players.json` 显示真人验证，可以在本机浏览器完成验证后，在开发者工具中对成功请求使用 `Copy as cURL`。只复制 `-b '...'` 参数中的 Cookie 值，保存为独立文件，例如 `data/map1.cookies`，然后在配置中启用：
+
+```toml
+source_url = "https://map1.nodemc.cc/tiles/players.json?"
+source_cookie_file = "data/map1.cookies"
+source_user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+source_referer = "https://map1.nodemc.cc/tiles/players.json?"
+```
+
+Cookie 文件是敏感凭证，请限制文件权限并不要提交到 Git。程序会在每次轮询时重新读取该文件，因此真人验证过期后，重新导出 Cookie 并替换文件即可，无需重启客户端。复制出来的 `if-none-match`、`sec-*`、`priority` 和 `upgrade-insecure-requests` 不需要配置：客户端会自动维护 ETag，并只发送必要的请求头。
+
+验证页失效时，客户端会向 Relay/Backend 上报明确的 `captcha_required` 原因，并继续遵守 `failure_grace_secs` 的降级和清空策略；不会把它笼统归类为 `json`。
 
 历史状态默认写入 `data/history-v1.json`，默认保留已下线玩家 90 天。将 `history_retention_days` 设为 `0` 可永久保留。程序使用内存索引和节流的原子 JSON 快照，不引入数据库；下线、重新上线和过期删除立即落盘，持续在线确认最多每 60 秒合并落盘。HTTP 客户端只启用 Squaremap 所需的 HTTP/1.1，单线程 Tokio runtime、musl 静态链接和 scratch 运行镜像共同控制常驻资源。
 
@@ -37,6 +52,15 @@ docker build \
 cp config.example.toml config.toml
 docker compose -f compose.example.yml up -d --build
 ```
+
+Compose 示例默认以 UID `0` 运行，是为了兼容宿主机上常见的 root-owned/`0600` `config.toml` bind mount。由于最终运行镜像是 `scratch`，不应在 Compose 中写 `0:0`，否则 Docker 可能尝试从不存在的 `/etc/group` 解析组 `0`；镜像自身仍默认使用 UID/GID `65532:65532`。如果你希望 Compose 也使用非 root 用户，请先确保挂载的配置、Cookie 文件和数据目录都能被该 UID 读取/写入，再设置：
+
+```bash
+TEAMVIEWRELAY_CONTAINER_UID="$(id -u)" \
+  docker compose -f compose.example.yml up -d --build
+```
+
+如果启用了真人验证 Cookie，使用绝对容器路径并把文件只读挂载进去，例如在 Compose 的 `volumes` 中增加 `./data/map1.cookies:/data/map1.cookies:ro`，配置写成 `source_cookie_file = "/data/map1.cookies"`。
 
 如果 Docker Hub 不可达，可通过环境变量覆盖构建镜像，例如：
 

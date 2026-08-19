@@ -50,6 +50,9 @@ async fn main() -> Result<()> {
         let mut upstream = match UpstreamClient::new(
             upstream_config.source_url.clone(),
             upstream_config.normalize_dimensions,
+            upstream_config.source_cookie_file.clone(),
+            upstream_config.source_user_agent.clone(),
+            upstream_config.source_referer.clone(),
         ) {
             Ok(client) => client,
             Err(error) => {
@@ -145,7 +148,7 @@ async fn main() -> Result<()> {
                     }
                     PollEvent::Failed(error) => {
                         warn!(code = error.code, detail = %error.detail, "Squaremap upstream poll failed");
-                        publisher.upstream_failed(error.code, Instant::now())
+                        publisher.upstream_failed(&error.code, Instant::now())
                     }
                 };
                 send_actions(&relay_tx, &source_id, actions, replace_supported);

@@ -19,6 +19,12 @@ pub struct Args {
     room_code: Option<String>,
     #[arg(long, env = "TEAMVIEWRELAY_SOURCE_URL")]
     source_url: Option<String>,
+    #[arg(long, env = "TEAMVIEWRELAY_SOURCE_COOKIE_FILE")]
+    source_cookie_file: Option<PathBuf>,
+    #[arg(long, env = "TEAMVIEWRELAY_SOURCE_USER_AGENT")]
+    source_user_agent: Option<String>,
+    #[arg(long, env = "TEAMVIEWRELAY_SOURCE_REFERER")]
+    source_referer: Option<String>,
     #[arg(long, env = "TEAMVIEWRELAY_DISPLAY_NAME")]
     display_name: Option<String>,
     #[arg(long, env = "TEAMVIEWRELAY_POLL_INTERVAL_SECS")]
@@ -47,6 +53,9 @@ struct FileConfig {
     relay_url: Option<String>,
     room_code: Option<String>,
     source_url: Option<String>,
+    source_cookie_file: Option<PathBuf>,
+    source_user_agent: Option<String>,
+    source_referer: Option<String>,
     display_name: Option<String>,
     poll_interval_secs: Option<u64>,
     failure_grace_secs: Option<u64>,
@@ -62,6 +71,9 @@ pub struct Config {
     pub relay_url: Url,
     pub room_code: String,
     pub source_url: Url,
+    pub source_cookie_file: Option<PathBuf>,
+    pub source_user_agent: Option<String>,
+    pub source_referer: Option<String>,
     pub display_name: String,
     pub poll_interval: Duration,
     pub failure_grace: Duration,
@@ -100,6 +112,18 @@ impl Config {
         if !matches!(source_url.scheme(), "http" | "https") {
             bail!("source_url must use http or https");
         }
+
+        let source_cookie_file = args.source_cookie_file.or(file.source_cookie_file);
+        let source_user_agent = args
+            .source_user_agent
+            .or(file.source_user_agent)
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let source_referer = args
+            .source_referer
+            .or(file.source_referer)
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
 
         let room_code = args
             .room_code
@@ -161,6 +185,9 @@ impl Config {
             relay_url,
             room_code,
             source_url,
+            source_cookie_file,
+            source_user_agent,
+            source_referer,
             display_name,
             poll_interval: Duration::from_secs(poll_secs),
             failure_grace: Duration::from_secs(grace_secs),

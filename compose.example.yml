@@ -11,7 +11,11 @@ services:
     restart: unless-stopped
     command: ["--config", "/config/config.toml"]
     read_only: true
-    user: "65532:65532"
+    # The bind-mounted config may be root-owned and mode 0600 on the host.
+    # Use only the numeric root UID. The scratch image has no /etc/group,
+    # so specifying `0:0` makes Docker try to resolve a group that is absent.
+    # Override with TEAMVIEWRELAY_CONTAINER_UID for a readable non-root UID.
+    user: "${TEAMVIEWRELAY_CONTAINER_UID:-0}"
     cap_drop:
       - ALL
     security_opt:

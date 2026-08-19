@@ -1,3 +1,4 @@
 /target/
 /config.toml
+/data/*.cookies
 /运行/
