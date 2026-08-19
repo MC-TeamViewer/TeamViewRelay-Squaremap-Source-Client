@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: MC-TeamViewer/TeamViewRelay-Protocol
-          ref: proto/v0.6.3
+          ref: proto/v0.6.4
           path: TeamViewRelay-Protocol
       - uses: dtolnay/rust-toolchain@stable
         with:

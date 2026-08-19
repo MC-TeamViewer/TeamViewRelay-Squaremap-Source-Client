@@ -1,9 +1,12 @@
 mod config;
+mod history;
 mod model;
 mod proto;
 mod publisher;
 mod relay;
 mod upstream;
+
+use std::time::Duration;
 
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -12,6 +15,7 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
+use crate::history::{HistoryStore, utc_now_ms};
 use crate::publisher::{PublishAction, Publisher};
 use crate::relay::RelayEvent;
 use crate::upstream::{PollError, PollOutcome, UpstreamClient};
@@ -30,6 +34,7 @@ async fn main() -> Result<()> {
         .init();
 
     let config = Config::load()?;
+    let mut history = HistoryStore::load(&config)?;
     let source_id = config.source_id.hyphenated().to_string();
     info!(
         %source_id,
@@ -73,6 +78,11 @@ async fn main() -> Result<()> {
     let relay_task = tokio::spawn(relay::run(relay_config, relay_rx, event_tx));
     let mut publisher = Publisher::new(config.failure_grace);
     let mut replace_supported = false;
+    let mut history_supported = false;
+    let mut relay_connected = false;
+    let mut maintenance = tokio::time::interval(Duration::from_secs(60));
+    maintenance.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    maintenance.tick().await;
 
     loop {
         tokio::select! {
@@ -81,16 +91,31 @@ async fn main() -> Result<()> {
                     break;
                 };
                 match event {
-                    RelayEvent::Connected { replace_supported: supported } => {
+                    RelayEvent::Connected {
+                        replace_supported: supported,
+                        history_supported: supports_history,
+                    } => {
+                        relay_connected = true;
                         replace_supported = supported;
+                        history_supported = supports_history;
                         send_actions(
                             &relay_tx,
                             &source_id,
                             publisher.relay_connected(),
                             replace_supported,
                         );
+                        if history_supported {
+                            let _ = relay_tx.send(relay::history_full_packet(
+                                &source_id,
+                                history.snapshot(),
+                            ));
+                        }
                     }
-                    RelayEvent::Disconnected => publisher.relay_disconnected(),
+                    RelayEvent::Disconnected => {
+                        relay_connected = false;
+                        history_supported = false;
+                        publisher.relay_disconnected();
+                    }
                 }
             }
             event = poll_rx.recv() => {
@@ -102,15 +127,40 @@ async fn main() -> Result<()> {
                         if snapshot.skipped_entries > 0 {
                             warn!(skipped = snapshot.skipped_entries, "Skipped invalid upstream player entries");
                         }
+                        let history_delta = history.observe_snapshot(&snapshot, utc_now_ms());
+                        if !history_delta.is_empty() {
+                            history.flush_urgent()?;
+                            if relay_connected && history_supported {
+                                let _ = relay_tx.send(relay::history_patch_packet(
+                                    &source_id,
+                                    history_delta,
+                                ));
+                            }
+                        }
                         publisher.upstream_succeeded(Some(snapshot))
                     }
-                    PollEvent::Success(PollOutcome::NotModified) => publisher.upstream_succeeded(None),
+                    PollEvent::Success(PollOutcome::NotModified) => {
+                        history.confirm_not_modified(utc_now_ms());
+                        publisher.upstream_succeeded(None)
+                    }
                     PollEvent::Failed(error) => {
                         warn!(code = error.code, detail = %error.detail, "Squaremap upstream poll failed");
                         publisher.upstream_failed(error.code, Instant::now())
                     }
                 };
                 send_actions(&relay_tx, &source_id, actions, replace_supported);
+            }
+            _ = maintenance.tick() => {
+                let history_delta = history.maintenance(utc_now_ms())?;
+                if !history_delta.is_empty() {
+                    history.flush_urgent()?;
+                    if relay_connected && history_supported {
+                        let _ = relay_tx.send(relay::history_patch_packet(
+                            &source_id,
+                            history_delta,
+                        ));
+                    }
+                }
             }
             result = tokio::signal::ctrl_c() => {
                 result?;
@@ -123,6 +173,7 @@ async fn main() -> Result<()> {
     poll_task.abort();
     drop(relay_tx);
     relay_task.abort();
+    history.flush_urgent()?;
     Ok(())
 }
 

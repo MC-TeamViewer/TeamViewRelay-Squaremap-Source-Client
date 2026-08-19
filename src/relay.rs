@@ -10,23 +10,28 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use tracing::{info, warn};
 
 use crate::config::Config;
+use crate::history::{HistoryDelta, LastSeenRecord};
 use crate::model::{PlayerRecord, Snapshot, TabRecord};
 use crate::proto::wire_envelope::Payload;
 use crate::proto::{
-    ClientRole, ExternalSourceStatus, HandshakeAck, PlayerData, PlayerDelta,
-    PlayerHandshakeRequest, PlayerPatchScope, PlayerReportBundle, PlayerUpsert, PlayersReplace,
-    SourceStateClear, StateKeepalive, TabPlayerEntry, TabPlayerUpsert, TabPlayersPatchScope,
-    TabPlayersReplace, WireChannel, WireEnvelope,
+    ClientRole, ExternalSourceStatus, HandshakeAck, LastSeenPlayerData, LastSeenPlayerPatchScope,
+    LastSeenPlayerUpsert, LastSeenPlayersReplace, PlayerData, PlayerDelta, PlayerHandshakeRequest,
+    PlayerPatchScope, PlayerReportBundle, PlayerUpsert, PlayersReplace, SourceStateClear,
+    StateKeepalive, TabPlayerEntry, TabPlayerUpsert, TabPlayersPatchScope, TabPlayersReplace,
+    WireChannel, WireEnvelope,
 };
 use crate::publisher::PublishAction;
 
-const NETWORK_PROTOCOL_VERSION: &str = "0.6.3";
+const NETWORK_PROTOCOL_VERSION: &str = "0.6.4";
 const MINIMUM_COMPATIBLE_PROTOCOL_VERSION: &str = "0.6.1";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub enum RelayEvent {
-    Connected { replace_supported: bool },
+    Connected {
+        replace_supported: bool,
+        history_supported: bool,
+    },
     Disconnected,
 }
 
@@ -40,10 +45,13 @@ pub async fn run(
     let mut retry_delay = Duration::from_secs(1);
     loop {
         match connect_and_handshake(&config).await {
-            Ok((socket, replace_supported)) => {
+            Ok((socket, replace_supported, history_supported)) => {
                 retry_delay = Duration::from_secs(1);
                 if events
-                    .send(RelayEvent::Connected { replace_supported })
+                    .send(RelayEvent::Connected {
+                        replace_supported,
+                        history_supported,
+                    })
                     .is_err()
                 {
                     return;
@@ -70,7 +78,7 @@ pub async fn run(
     }
 }
 
-async fn connect_and_handshake(config: &Config) -> Result<(RelaySocket, bool)> {
+async fn connect_and_handshake(config: &Config) -> Result<(RelaySocket, bool, bool)> {
     let (mut socket, _) = timeout(CONNECT_TIMEOUT, connect_async(config.relay_url.as_str()))
         .await
         .context("Relay connection timed out")?
@@ -142,7 +150,15 @@ async fn connect_and_handshake(config: &Config) -> Result<(RelaySocket, bool)> {
         room = %ack.room_code,
         "Relay connected"
     );
-    Ok((socket, replace_supported))
+    let history_supported =
+        replace_supported && protocol_at_least(&ack.network_protocol_version, "0.6.4");
+    if !history_supported {
+        warn!(
+            protocol = %ack.network_protocol_version,
+            "Relay does not support last-seen player history; realtime reporting remains enabled"
+        );
+    }
+    Ok((socket, replace_supported, history_supported))
 }
 
 async fn run_connected(
@@ -238,6 +254,40 @@ pub fn action_packets(
         },
     };
     vec![encode(Payload::PlayerReportBundle(bundle))]
+}
+
+pub fn history_full_packet(
+    source_id: &str,
+    players: std::collections::BTreeMap<String, LastSeenRecord>,
+) -> Vec<u8> {
+    encode(Payload::PlayerReportBundle(PlayerReportBundle {
+        submit_player_id: source_id.to_owned(),
+        last_seen_players_replace: Some(LastSeenPlayersReplace {
+            players: players
+                .into_iter()
+                .map(|(id, value)| (id, last_seen_player_data(value)))
+                .collect(),
+        }),
+        ..Default::default()
+    }))
+}
+
+pub fn history_patch_packet(source_id: &str, delta: HistoryDelta) -> Vec<u8> {
+    encode(Payload::PlayerReportBundle(PlayerReportBundle {
+        submit_player_id: source_id.to_owned(),
+        last_seen_players_patch: Some(LastSeenPlayerPatchScope {
+            upsert: delta
+                .upsert
+                .into_iter()
+                .map(|(id, value)| LastSeenPlayerUpsert {
+                    id,
+                    data: Some(last_seen_player_data(value)),
+                })
+                .collect(),
+            delete: delta.delete,
+        }),
+        ..Default::default()
+    }))
 }
 
 fn full_bundle(source_id: &str, snapshot: Snapshot) -> PlayerReportBundle {
@@ -388,6 +438,31 @@ fn tab_player_entry(player: TabRecord) -> TabPlayerEntry {
         display_name: None,
         prefixed_name: None,
     }
+}
+
+fn last_seen_player_data(record: LastSeenRecord) -> LastSeenPlayerData {
+    LastSeenPlayerData {
+        x: record.x,
+        y: record.y,
+        z: record.z,
+        dimension: record.dimension,
+        player_name: record.player_name,
+        player_uuid: record.player_uuid,
+        last_seen_at_utc_ms: record.last_seen_at_utc_ms,
+        position_observed_at_utc_ms: record.position_observed_at_utc_ms,
+        offline_detected_at_utc_ms: record.offline_detected_at_utc_ms,
+    }
+}
+
+fn protocol_at_least(current: &str, minimum: &str) -> bool {
+    fn parts(version: &str) -> [u64; 3] {
+        let mut result = [0; 3];
+        for (index, part) in version.trim().split('.').take(3).enumerate() {
+            result[index] = part.parse().unwrap_or(0);
+        }
+        result
+    }
+    parts(current) >= parts(minimum)
 }
 
 fn encode(payload: Payload) -> Vec<u8> {

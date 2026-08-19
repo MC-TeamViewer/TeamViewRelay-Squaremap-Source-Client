@@ -1,4 +1,4 @@
-ARG RUST_IMAGE=rust:1.94-bookworm
+ARG RUST_IMAGE=rust:1.94.1-bookworm
 
 FROM ${RUST_IMAGE} AS builder
 WORKDIR /build
@@ -15,6 +15,7 @@ RUN cargo build --locked --release --target x86_64-unknown-linux-musl
 
 FROM scratch
 COPY --from=builder /build/TeamViewRelay-Squaremap-Source-Client/target/x86_64-unknown-linux-musl/release/teamviewrelay-squaremap-source-client /teamviewrelay-squaremap-source-client
+COPY --chown=65532:65532 docker-root/data /data
 USER 65532:65532
 ENTRYPOINT ["/teamviewrelay-squaremap-source-client"]
 CMD ["--config", "/config/config.toml"]

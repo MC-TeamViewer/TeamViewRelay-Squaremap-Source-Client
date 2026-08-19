@@ -1,13 +1,13 @@
 services:
   squaremap-source:
-    image: professornuo/team-view-relay-squaremap-source-client:v0.1.0-proto0.6.3
+    image: professornuo/team-view-relay-squaremap-source-client:v0.2.0-proto0.6.4
     build:
       context: .
       dockerfile: Dockerfile
       additional_contexts:
         protocol: ../TeamViewRelay-Protocol/proto
       args:
-        RUST_IMAGE: ${RUST_IMAGE:-rust:1.94-bookworm}
+        RUST_IMAGE: ${RUST_IMAGE:-rust:1.94.1-bookworm}
     restart: unless-stopped
     command: ["--config", "/config/config.toml"]
     read_only: true
@@ -21,8 +21,12 @@ services:
     pids_limit: 32
     volumes:
       - ./config.toml:/config/config.toml:ro
+      - squaremap-history:/data
     logging:
       driver: local
       options:
         max-size: 1m
         max-file: "2"
+
+volumes:
+  squaremap-history:

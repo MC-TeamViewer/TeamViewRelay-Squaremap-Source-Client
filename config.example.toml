@@ -5,6 +5,11 @@ display_name = "Example Squaremap"
 poll_interval_secs = 5
 failure_grace_secs = 30
 normalize_dimensions = true
+history_state_path = "/data/history-v1.json"
+history_retention_days = 90
+history_flush_interval_secs = 60
+
+# Set history_retention_days to 0 to retain offline player history permanently.
 
 # Optional. When omitted, a stable UUIDv5 is derived from relay_url, room_code,
 # and source_url. Only run one active instance for the same derived source ID.

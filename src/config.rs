@@ -33,6 +33,12 @@ pub struct Args {
     normalize_dimensions: Option<bool>,
     #[arg(long, env = "TEAMVIEWRELAY_SOURCE_ID")]
     source_id: Option<Uuid>,
+    #[arg(long, env = "TEAMVIEWRELAY_HISTORY_STATE_PATH")]
+    history_state_path: Option<PathBuf>,
+    #[arg(long, env = "TEAMVIEWRELAY_HISTORY_RETENTION_DAYS")]
+    history_retention_days: Option<u64>,
+    #[arg(long, env = "TEAMVIEWRELAY_HISTORY_FLUSH_INTERVAL_SECS")]
+    history_flush_interval_secs: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -46,6 +52,9 @@ struct FileConfig {
     failure_grace_secs: Option<u64>,
     normalize_dimensions: Option<bool>,
     source_id: Option<Uuid>,
+    history_state_path: Option<PathBuf>,
+    history_retention_days: Option<u64>,
+    history_flush_interval_secs: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +67,9 @@ pub struct Config {
     pub failure_grace: Duration,
     pub normalize_dimensions: bool,
     pub source_id: Uuid,
+    pub history_state_path: PathBuf,
+    pub history_retention_days: u64,
+    pub history_flush_interval: Duration,
 }
 
 impl Config {
@@ -129,6 +141,21 @@ impl Config {
             let seed = format!("{}|{}|{}", relay_url, room_code, source_url);
             Uuid::new_v5(&Uuid::NAMESPACE_URL, seed.as_bytes())
         });
+        let history_state_path = args
+            .history_state_path
+            .or(file.history_state_path)
+            .unwrap_or_else(|| PathBuf::from("data/history-v1.json"));
+        let history_retention_days = args
+            .history_retention_days
+            .or(file.history_retention_days)
+            .unwrap_or(90);
+        let history_flush_interval_secs = args
+            .history_flush_interval_secs
+            .or(file.history_flush_interval_secs)
+            .unwrap_or(60);
+        if history_flush_interval_secs == 0 {
+            bail!("history_flush_interval_secs must be positive");
+        }
 
         Ok(Self {
             relay_url,
@@ -139,6 +166,9 @@ impl Config {
             failure_grace: Duration::from_secs(grace_secs),
             normalize_dimensions,
             source_id,
+            history_state_path,
+            history_retention_days,
+            history_flush_interval: Duration::from_secs(history_flush_interval_secs),
         })
     }
 }

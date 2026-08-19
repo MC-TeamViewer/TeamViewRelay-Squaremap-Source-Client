@@ -1,6 +1,6 @@
 [package]
 name = "teamviewrelay-squaremap-source-client"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 build = "build.rs"
@@ -10,7 +10,7 @@ anyhow = "1.0"
 clap = { version = "4.5", features = ["derive", "env"] }
 futures-util = "0.3"
 prost = "0.14"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.47", features = ["macros", "rt", "signal", "sync", "time", "test-util"] }
