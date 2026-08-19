@@ -2,8 +2,3 @@
 /config.toml
 /data/*.cookies
 /运行/
-
-# pass-cdn local browser/runtime files
-/pass-cdn/chrome-linux/
-/pass-cdn/.venv/
-/pass-cdn/__pycache__/

@@ -1,6 +1,8 @@
 # TeamViewRelay Squaremap Source Client
 
-轻量 Rust 常驻客户端，轮询 Squaremap 的 `players.json` 接口，并通过 TeamViewRelay 现有的 `/mc-client` WebSocket 上报。
+单一 Rust Cargo 包提供两个程序：轻量的 Squaremap source client 轮询
+`players.json` 并通过 TeamViewRelay `/mc-client` WebSocket 上报；可选的
+`teamviewrelay-pass-cdn` 使用 headless Chromium 自动处理 EdgeOne 验证。
 
 客户端使用协议 `0.6.4` 的 `CLIENT_ROLE_EXTERNAL_SOURCE` 角色。`relay_url` 和 `source_url` 都是必填项；房间默认使用 `default`，默认每 5 秒轮询一次，并在上游连续失败 30 秒后清空本来源的实时状态。
 
@@ -13,6 +15,12 @@
 ```bash
 cp config.example.toml config.toml
 cargo run --release -- --config config.toml
+```
+
+根包默认运行 source client，也可以明确指定二进制：
+
+```bash
+cargo run --release --bin teamviewrelay-squaremap-source-client -- --config config.toml
 ```
 
 也可以使用环境变量覆盖配置：`TEAMVIEWRELAY_RELAY_URL`、`TEAMVIEWRELAY_ROOM_CODE`、`TEAMVIEWRELAY_SOURCE_URL`、`TEAMVIEWRELAY_SOURCE_COOKIE_FILE`、`TEAMVIEWRELAY_SOURCE_USER_AGENT`、`TEAMVIEWRELAY_SOURCE_REFERER`、`TEAMVIEWRELAY_DISPLAY_NAME`、`TEAMVIEWRELAY_POLL_INTERVAL_SECS`、`TEAMVIEWRELAY_FAILURE_GRACE_SECS`、`TEAMVIEWRELAY_NORMALIZE_DIMENSIONS`、`TEAMVIEWRELAY_SOURCE_ID`、`TEAMVIEWRELAY_HISTORY_STATE_PATH`、`TEAMVIEWRELAY_HISTORY_RETENTION_DAYS` 和 `TEAMVIEWRELAY_HISTORY_FLUSH_INTERVAL_SECS`。
@@ -43,21 +51,22 @@ Cookie 文件是敏感凭证，请限制文件权限并不要提交到 Git。程
 ```bash
 docker build \
   --build-context protocol=../TeamViewRelay-Protocol/proto \
-  -t professornuo/team-view-relay-squaremap-source-client:v0.2.0-proto0.6.4 .
+  -t professornuo/team-view-relay-squaremap-source-client:v0.2.1-proto0.6.4 .
 ```
 
-`compose.example.yml` 提供了低占用运行配置：无端口暴露、只读文件系统、无 Linux capabilities、`0.25 CPU`、`64MB` 内存和最多 32 个进程。准备配置后运行：
+统一的 `compose.yml` 默认只启动直连 source client，并保留无端口暴露、只读
+文件系统、无 Linux capabilities、`0.25 CPU`、`64MB` 内存和最多 32 个进程：
 
 ```bash
 cp config.example.toml config.toml
-docker compose -f compose.example.yml up -d --build
+docker compose up -d --build
 ```
 
 Compose 示例默认以 UID `0` 运行，是为了兼容宿主机上常见的 root-owned/`0600` `config.toml` bind mount。由于最终运行镜像是 `scratch`，不应在 Compose 中写 `0:0`，否则 Docker 可能尝试从不存在的 `/etc/group` 解析组 `0`；镜像自身仍默认使用 UID/GID `65532:65532`。如果你希望 Compose 也使用非 root 用户，请先确保挂载的配置、Cookie 文件和数据目录都能被该 UID 读取/写入，再设置：
 
 ```bash
 TEAMVIEWRELAY_CONTAINER_UID="$(id -u)" \
-  docker compose -f compose.example.yml up -d --build
+  docker compose up -d --build
 ```
 
 如果启用了真人验证 Cookie，使用绝对容器路径并把文件只读挂载进去，例如在 Compose 的 `volumes` 中增加 `./data/map1.cookies:/data/map1.cookies:ro`，配置写成 `source_cookie_file = "/data/map1.cookies"`。
@@ -66,25 +75,16 @@ TEAMVIEWRELAY_CONTAINER_UID="$(id -u)" \
 
 ```bash
 RUST_IMAGE=docker.1ms.run/library/rust:1.94.1-bookworm \
-  docker compose -f compose.example.yml build
-```
-
-离线打包时，可先在相同 Linux 架构的主机上构建静态 MUSL 二进制，再只将该二进制封装进镜像；这样无需拉取 Rust 构建镜像，运行层仍为 `scratch`：
-
-```bash
-cargo build --locked --release --target x86_64-unknown-linux-musl
-docker build \
-  --build-context binary=target/x86_64-unknown-linux-musl/release \
-  -f Dockerfile.prebuilt \
-  -t professornuo/team-view-relay-squaremap-source-client:v0.2.0-proto0.6.4 .
+DEBIAN_IMAGE=docker.1ms.run/library/debian:bookworm-slim \
+  docker compose build
 ```
 
 上游请求失败时，客户端不会刷新旧玩家对象。连续失败达到 30 秒后会清空自己上报的玩家和 Tab 状态；`200` 和 `304` 都视为成功确认。
 
-### 可选 pass-cdn 浏览器 sidecar
+### 可选 Chromium sidecar
 
-Rust 客户端仍支持直接读取源站；如果 EdgeOne 验证频繁失效，可以让
-`pass-cdn` 保持一个 Chromium 会话，再把 Rust 的 `source_url` 指向 sidecar：
+如果 EdgeOne 验证频繁失效，可以运行同一 Cargo 包中的
+`teamviewrelay-pass-cdn`，再把 source client 的 `source_url` 指向 sidecar：
 
 ```toml
 source_url = "http://pass-cdn:8080/tiles/players.json"
@@ -92,14 +92,35 @@ source_id = "00000000-0000-0000-0000-000000000001"
 ```
 
 sidecar 提供与源站相同的 JSON 接口，并实现 `ETag`/`304`、健康检查和过期
-`503`。Rust 不需要启动 Python 或 Chrome，仍使用原有的 HTTP 轮询和失败宽限。
+`503`。主 Rust 客户端不需要启动 Python 或 Chrome，仍使用原有的 HTTP 轮询和失败宽限；
+Chromium 只由独立 sidecar 在需要时管理。
 
-仓库提供独立的 `compose.pass-cdn.example.yml`，不会改变现有直连 Compose：
+本地一次性验证和取数：
+
+```bash
+cargo run --release --bin teamviewrelay-pass-cdn -- --once
+```
+
+统一 Compose 的 `browser` profile 会使用 `pass-cdn-runtime` 镜像；该镜像不包含
+Python，只包含 Rust 二进制和 Debian Chromium：
 
 ```bash
 cp config.pass-cdn.example.toml config.pass-cdn.toml
-docker compose -f compose.pass-cdn.example.yml up -d --build
+TEAMVIEWRELAY_CONFIG_FILE=./config.pass-cdn.toml \
+  docker compose --profile browser up -d --build
 ```
+
+`squaremap-source` 没有硬依赖可选 profile，会在 sidecar 启动和完成首次验证期间按
+既有失败策略重试，sidecar 就绪后自动恢复。停止浏览器模式时使用相同环境变量：
+
+```bash
+TEAMVIEWRELAY_CONFIG_FILE=./config.pass-cdn.toml \
+  docker compose --profile browser down
+```
+
+默认 `resident` 模式常驻一个无头 Chromium 会话。如果更重视内存占用，可以设置
+`PASS_CDN_BROWSER_MODE=on-demand`：先用 Rust HTTP 请求取数，只有遇到 EdgeOne
+验证时才短暂启动 Chromium。浏览器 profile 只放在容器 `/tmp`，不跨重启保存。
 
 切换到 sidecar 时请固定 `source_id`。历史文件现在只按 `source_id` 和房间
 校验，传输地址从源站切换为 sidecar 不会丢失离线历史。
@@ -119,4 +140,7 @@ docker compose -f compose.pass-cdn.example.yml up -d --build
 
 ## 发布
 
-推送 `v*` tag 后，GitHub Actions 会构建 Linux x86_64、Linux aarch64 和 Windows x86_64 产物。仓库根目录的 `Dockerfile` 生成静态、非 root 的最小运行镜像。
+推送 `v*` tag 后，GitHub Actions 当前只构建 Linux x86_64，并在同一 artifact
+中上传 `teamviewrelay-squaremap-source-client` 与 `teamviewrelay-pass-cdn`。
+根 `Dockerfile` 的默认结果仍是静态、非 root 的 source client；指定
+`--target pass-cdn-runtime` 可构建 Chromium sidecar 镜像。

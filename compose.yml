@@ -1,0 +1,91 @@
+services:
+  squaremap-source:
+    image: ${TEAMVIEWRELAY_IMAGE:-professornuo/team-view-relay-squaremap-source-client:v0.2.1-proto0.6.4}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: source-runtime
+      additional_contexts:
+        protocol: ../TeamViewRelay-Protocol/proto
+      args:
+        RUST_IMAGE: ${RUST_IMAGE:-rust:1.94.1-bookworm}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:-debian:bookworm-slim}
+    restart: unless-stopped
+    command: ["--config", "/config/config.toml"]
+    read_only: true
+    user: "${TEAMVIEWRELAY_CONTAINER_UID:-0}"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.25
+    mem_limit: 64m
+    pids_limit: 32
+    volumes:
+      - "${TEAMVIEWRELAY_CONFIG_FILE:-./config.toml}:/config/config.toml:ro"
+      - squaremap-history:/data
+    logging:
+      driver: local
+      options:
+        max-size: 1m
+        max-file: "2"
+
+  pass-cdn:
+    profiles:
+      - browser
+    image: ${PASS_CDN_IMAGE:-teamviewrelay-squaremap-pass-cdn:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: pass-cdn-runtime
+      additional_contexts:
+        protocol: ../TeamViewRelay-Protocol/proto
+      args:
+        RUST_IMAGE: ${RUST_IMAGE:-rust:1.94.1-bookworm}
+        DEBIAN_IMAGE: ${DEBIAN_IMAGE:-debian:bookworm-slim}
+    restart: unless-stopped
+    command:
+      - "--serve"
+      - "--browser-mode"
+      - "${PASS_CDN_BROWSER_MODE:-resident}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--url"
+      - "${PASS_CDN_TARGET_URL:-https://map1.nodemc.cc/tiles/players.json}"
+      - "--poll-interval"
+      - "${PASS_CDN_POLL_INTERVAL_SECS:-5}"
+      - "--max-stale-secs"
+      - "${PASS_CDN_MAX_STALE_SECS:-30}"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.50
+    mem_limit: 512m
+    pids_limit: 256
+    expose:
+      - "8080"
+    healthcheck:
+      test:
+        - CMD
+        - /usr/local/bin/teamviewrelay-pass-cdn
+        - --healthcheck
+        - --healthcheck-url
+        - http://127.0.0.1:8080/healthz
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging:
+      driver: local
+      options:
+        max-size: 2m
+        max-file: "2"
+
+volumes:
+  squaremap-history:
